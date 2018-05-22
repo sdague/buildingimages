@@ -24,8 +24,8 @@ From the application's perspective, a container image is a single
 filesystem that is created before the application is started.
 
 From a creation perspective, container images are layers. These layers
-are built up using a Docker file. Lets look at the example guestbook
-application Docker file and pull it apart.
+are built up using a `Dockerfile`. Lets look at the example guestbook
+application `Dockerfile` and pull it apart.
 
 ```
 FROM golang as builder
@@ -47,42 +47,74 @@ CMD ["./guestbook"]
 EXPOSE 3000
 ```
 
-Docker files specific a set of commands, at each command we build a
-new layer.
+A Dockerfile contains a set of image build directives, such as `COPY`
+or `RUN`. When each directive is executed it creates a new layer in
+the image repository. Future layers build on the ones before it. This
+layered approach creates some efficiencies for storing and fetching
+image content.
 
-FROM - pulls a layer from a remote repository. The default
-repository is the docker image registry. This could be a complete OS
-image, or some partial image that used to do something small. In this
-example we pull in 2 different base images. One is a named layer for
-the golang build environment, so that it can be referenced later. The
-second one is the base image with just enough operating system to
-provide debug facilities inside the image.
+## Directives
 
-RUN - executes a command, all output files go into the layer. There
+Here is a brief overview of the directives used above.
+
+`FROM` - pulls a layer from a remote repository. The default
+repository is the docker image registry. A special form of `FROM` uses
+the `as` keyword to create a named building space.
+
+`RUN` - executes a command, all output files go into the layer. There
 are a few `go get` commands that pull in libraries for the main
 application. Later the main.go is compiled using this.
 
-COPY - copy a file from the local filesystem into the container. This
+`COPY` - copy a file from the local filesystem into the container. This
 can work on a set of files.
 
-WORKDIR - set the working directory for the entrypoint
+`WORKDIR` - like unix `cwd`, change the workding directory. The
+impacts all future commands in the `Dockerfile`.
 
-CMD - what command should be run in this container if no exec is
-passed into it. CMD means that the command run is replaceable. There
+`CMD` - what command should be run in this container if no exec is
+passed into it. `CMD` means that the command run is replaceable. There
 is another stanza `ENTRYPOINT` which is not replaceable.
 
-EXPOSE - open up a specific port from this container to the
-infrastructure. Without this no network traffic will be allowed into
-the container.
+`EXPOSE` - open up a specific port from this container to the
+infrastructure.
 
 These commands, plus many more are documented on the [Docker reference
 site](https://docs.docker.com/engine/reference/builder/#cmd).
+
+## What's going on
+
+This example shows some of the more advanced methods in building an
+image. One of the best practices is to ship artifacts and not build
+environments. In this case there are two `FROM` stanzas.
+
+```
+FROM golang as builder
+RUN go get github.com/codegangsta/negroni
+RUN go get github.com/gorilla/mux github.com/xyproto/simpleredis
+COPY main.go .
+RUN go build main.go
+```
+
+This first import of the `golang` layer creates an environment that
+can compile go code. It is named `builder` for reference later.
+
+```
+FROM busybox:ubuntu-14.04
+
+COPY --from=builder /go//main /app/guestbook
+```
+
+Once that is compiled, a new base layer is referenced for a minimal
+filesystem. The application is copied from the `builder` environment
+into the primary environment. The net result is a very small image
+with just the statically compiled go binary and some tools to help
+with debugging later.
 
 ## Best Practices for Building Images
 
 There are a number of best practices when building images.
 
-### Clean up everything you can
+### Ship artifacts not build environments
 
 Whatever files are created in a layer are stored in the intermediate
 layer. Sometimes what gets added in each layer ends up as a
@@ -126,12 +158,12 @@ that you can use for uploading images.
 
 ## Building using bx client
 
-The bx client can be used to build images using the local docker
-system. When building with the bx client all the authentication to the
-IBM Cloud Container Registry is handled behind the scenes.
+The bx client can be used to build images in the IBM Cloud, without
+needing to have docker installed locally. Authentication to the IBM
+Cloud is handled by bx client.
 
-We will want to provide a meaningful name for the image, as well as
-some kind of version.
+It is important to provide a meaningful name for the image, and a
+meaningful version.
 
 ```
 > bx cr build --tag registry.ng.bluemix.net/guestbook/gbv1:2018-05-18-1 guestbook
@@ -188,22 +220,21 @@ OK
 This builds and pushes all the relevant layers.
 
 The `--tag` field gives the image a name and version, separated by the
-`:`. When using the IBM Cloud Container Registry the name is going to
-include the full URL to that image.
+`:`. The name includes the registry url.
 
-The version portion can be anything that's meaningful to you. The
-important thing is that tags do not get reused. If you rebuild an
-image, make sure to change the version before uploading. Many
-kubernetes primitives, such as deployments, will perform a graceful
-rolling upgrade when you specify a new image version. If image
-versions get reused it hampers the effectiveness of container
-orchestration systems.
+The version is relatively free form. It should be something that is
+meaningful to your time. The important thing is that tags do not get
+reused. If you rebuild an image, make sure to change the version
+before uploading. Many Kubernetes primitives, such as deployments,
+will perform a graceful rolling upgrade when you specify a new image
+version. If image versions get reused it hampers the effectiveness of
+container orchestration systems.
 
 # Retrieving from IBM Cloud
 
-IBM Cloud images are included in kubernetes configuration in the same
-way as images from docker hub. The only difference is the full url is
-needed as it's the non default image repository.
+IBM Cloud images are referenced in kubernetes configuration by full
+url. This url is the same as the `--tag` that was specified during
+building.
 
 ```
 apiVersion: apps/v1
